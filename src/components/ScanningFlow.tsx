@@ -17,7 +17,10 @@ type QuickMessage = {
   content: string;
   sender: string;
   createdAt: string;
+  isSending?: boolean;
 };
+
+type ScanQualityStatus = "error" | "checking" | "good";
 
 export default function ScanningFlow() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -59,12 +62,29 @@ export default function ScanningFlow() {
     },
   ];
 
-  // Simple scan quality feedback for the guide and status
-  const scanStatusText = isGoodPosition ? "Good Position" : "Hold Still";
-  const scanStatusStyle = isGoodPosition
-    ? "border-green-400 text-green-200 bg-green-900/50"
-    : "border-yellow-400 text-yellow-200 bg-yellow-900/50";
-  const guideStyle = isGoodPosition ? "border-green-400" : "border-yellow-400";
+  const scanQualityStatus: ScanQualityStatus = !camReady
+    ? "error"
+    : isGoodPosition
+      ? "good"
+      : "checking";
+
+  const scanStatusText = {
+    error: "Camera Not Ready",
+    checking: "Hold Still",
+    good: "Good Position",
+  }[scanQualityStatus];
+
+  const scanStatusStyle = {
+    error: "border-red-400 text-red-100 bg-red-900/50",
+    checking: "border-yellow-400 text-yellow-200 bg-yellow-900/50",
+    good: "border-green-400 text-green-200 bg-green-900/50",
+  }[scanQualityStatus];
+
+  const guideStyle = {
+    error: "border-red-400",
+    checking: "border-yellow-400",
+    good: "border-green-400",
+  }[scanQualityStatus];
 
   // Each scan step starts in "Hold Still", then turns green after a short delay
   useEffect(() => {
@@ -130,10 +150,21 @@ export default function ScanningFlow() {
 
   // Save a quick patient message for the clinic
   const handleSendMessage = useCallback(async () => {
-    if (!messageText.trim()) return;
+    const content = messageText.trim();
+    if (!content) return;
+
+    const pendingMessage: QuickMessage = {
+      id: `pending-${Date.now()}`,
+      content,
+      sender: "patient",
+      createdAt: new Date().toISOString(),
+      isSending: true,
+    };
 
     setIsSendingMessage(true);
     setMessageError("");
+    setMessages((prev) => [...prev, pendingMessage]);
+    setMessageText("");
 
     try {
       const response = await fetch("/api/messaging", {
@@ -143,7 +174,7 @@ export default function ScanningFlow() {
         },
         body: JSON.stringify({
           patientId: "demo-patient",
-          content: messageText,
+          content,
           sender: "patient",
         }),
       });
@@ -154,10 +185,17 @@ export default function ScanningFlow() {
 
       const data = await response.json();
 
-      setMessages((prev) => [...prev, data.message]);
-      setMessageText("");
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === pendingMessage.id ? data.message : message,
+        ),
+      );
     } catch (err) {
       console.error("Failed to send message", err);
+      setMessages((prev) =>
+        prev.filter((message) => message.id !== pendingMessage.id),
+      );
+      setMessageText(content);
       setMessageError("Message failed to send. Please try again.");
     } finally {
       setIsSendingMessage(false);
@@ -285,7 +323,9 @@ export default function ScanningFlow() {
                     {messages.map((message) => (
                       <div key={message.id} className="rounded-md bg-black p-3">
                         <p className="text-xs text-zinc-500">
-                          {message.sender}
+                          {message.isSending
+                            ? `${message.sender} - sending`
+                            : message.sender}
                         </p>
                         <p className="text-sm text-zinc-100">
                           {message.content}
